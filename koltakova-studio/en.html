@@ -779,9 +779,15 @@ html:not(.is-ready) .hero,html:not(.is-ready) .hero *{animation-play-state:pause
 
 /* інтернет-магазин: комп'ютерна й мобільна версії поруч */
 .sv__scr--dm{position:relative}
+.sv__scr--dm .sv__v{aspect-ratio:16/9}.sv__scr--dm .sv__v video{object-fit:cover}
+
 .sv__ph{position:absolute;right:4%;bottom:6%;width:20%;aspect-ratio:360/780;border-radius:14px;border:3px solid #1c1c1c;background:#000;overflow:hidden;box-shadow:0 14px 34px rgba(0,0,0,.5)}
 .sv__ph video{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
 @media (max-width:640px){.sv__ph{width:23%;border-radius:10px;border-width:2px}}
+
+/* без системних кнопок «play» поверх відео (iPhone в енергозбереженні) */
+video::-webkit-media-controls,video::-webkit-media-controls-start-playback-button,video::-webkit-media-controls-overlay-play-button{display:none!important;-webkit-appearance:none;opacity:0!important}
+.lpm .hero__vid{opacity:1}
 </style>
 </head>
 <body>
@@ -1175,6 +1181,22 @@ html:not(.is-ready) .hero,html:not(.is-ready) .hero *{animation-play-state:pause
 </div>
 
 <script>
+/* iPhone у режимі енергозбереження блокує автозапуск відео: показуємо гарний кадр і запускаємо відео з першим дотиком */
+(function(){ var P = HTMLMediaElement.prototype.play, blocked = [], armed = false, ev = ['touchend','click','keydown'];
+function inView(v){ var r = v.getBoundingClientRect(); return r.width > 0 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; }
+function unlock(){ ev.forEach(function(n){ document.removeEventListener(n, unlock, true); }); armed = false;
+  var list = blocked.slice(); blocked.length = 0;
+  document.querySelectorAll('video').forEach(function(v){ if (!v.getAttribute('src') || !v.paused) return;
+    var want = list.indexOf(v) > -1 && inView(v), r = P.call(v);
+    if (r && r.then) r.then(function(){ if (!want) v.pause(); }).catch(function(){ if (blocked.indexOf(v) < 0) blocked.push(v); arm(); }); });
+  if (!blocked.length) document.documentElement.classList.remove('lpm'); }
+function arm(){ if (armed) return; armed = true; ev.forEach(function(n){ document.addEventListener(n, unlock, { capture:true, passive:true }); }); }
+HTMLMediaElement.prototype.play = function(){ var v = this, r = P.apply(v, arguments);
+  if (r && r.catch) r.catch(function(e){ if (e && e.name === 'NotAllowedError'){ if (blocked.indexOf(v) < 0) blocked.push(v); document.documentElement.classList.add('lpm'); arm(); } });
+  return r; };
+})();
+</script>
+<script>
 (function(){
 var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   /* прибираємо з відео кнопки браузера, що з'являються при наведенні */
@@ -1249,7 +1271,7 @@ var restarting = false;
 v.addEventListener('playing', function(){ hero.classList.add('has-vid'); v.classList.remove('dim'); }, { once:true });
 v.addEventListener('timeupdate', function(){ if (v.duration && v.duration - v.currentTime < 1 && !restarting){ restarting = true; v.classList.add('dim'); } });
 v.addEventListener('ended', function(){ setTimeout(function(){ v.currentTime = 0; var p = v.play(); if (p && p.catch) p.catch(function(){}); v.classList.remove('dim'); restarting = false; }, 250); });
-var p = v.play(); if (p && p.catch) p.catch(function(){});
+var p = v.play(); if (p && p.catch) p.catch(function(e){ if (e && e.name === 'NotAllowedError') v.poster = mob ? 'img/hero_m1.jpg' : 'img/hero_d1.jpg'; });
 if ('IntersectionObserver' in window) new IntersectionObserver(function(en){ if (en[0].isIntersecting){ if (v.paused && hero.classList.contains('has-vid')) v.play().catch(function(){}); } else v.pause(); }, { threshold:.1 }).observe(hero);
 }
 /* відео першого екрана починає вантажитися одразу, ще під час логотипа */
@@ -1419,6 +1441,8 @@ if (inView && active > -1 && !reduce) setSrc(cards[active]);
 var v = activeVideo(); if (!v) return;
 if (inView) playActive(); else v.pause();
 }, { threshold:.35 }).observe(stage);
+/* відео активної роботи вантажимо заздалегідь, щоб воно стартувало одразу */
+new IntersectionObserver(function(en, o){ if (en[0].isIntersecting && !reduce){ if (active > -1) setSrc(cards[active]); o.disconnect(); } }, { rootMargin:'900px 0px' }).observe(stage);
 } else inView = true;
 window.addEventListener('resize', layout);
 layout(); activate(0); raf = requestAnimationFrame(loop);
@@ -1440,13 +1464,10 @@ if ('IntersectionObserver' in window){
 /* одночасно грає лише одне відео послуг — те, що найкраще видно */
 var svV = Array.prototype.slice.call(bRoot.querySelectorAll('.sv video:not(.sv__mv)')), svR = svV.map(function(){ return 0; }), svOn = -1;
 function svPick(){
-var best = -1, br = .55;
-svR.forEach(function(r, i){ if (r > br){ br = r; best = i; } });
-if (best === svOn) return;
-if (svOn > -1) svV[svOn].pause();
-svOn = best; if (best > -1) bplay(svV[best]);
+/* грають усі відео послуг, які видно на екрані */
+svR.forEach(function(r, i){ var v = svV[i]; if (r > .2){ if (v.paused) bplay(v); } else if (!v.paused) v.pause(); });
 }
-var vio = new IntersectionObserver(function(en){ en.forEach(function(e){ svR[svV.indexOf(e.target)] = e.intersectionRatio; }); svPick(); }, { threshold:[0,.25,.55,.75,1] });
+var vio = new IntersectionObserver(function(en){ en.forEach(function(e){ svR[svV.indexOf(e.target)] = e.intersectionRatio; }); svPick(); }, { threshold:[0,.2,.4,.6,1] });
 svV.forEach(function(v){ vio.observe(v); });
 /* у картці магазину разом із комп'ютерною грає й мобільна версія */
 svV.forEach(function(v){ var m = v.closest('.sv').querySelector('.sv__mv'); if (!m) return;
@@ -1456,7 +1477,7 @@ v.addEventListener('pause', function(){ m.pause(); }); });
 var pre = new IntersectionObserver(function(en){ en.forEach(function(e){ if (e.isIntersecting){ var v = e.target; if (v.dataset.poster && !v.poster) v.poster = v.dataset.poster; if (!v.getAttribute('src') && !reduce){ v.preload = 'auto'; v.src = v.dataset.src; if (v.dataset.start) v.addEventListener('loadedmetadata', function(){ v.currentTime = +v.dataset.start; }, { once:true }); } pre.unobserve(v); } }); }, { rootMargin:'700px 0px' });
 svV.forEach(function(v){ pre.observe(v); });
 /* на комп'ютері відео під курсором має пріоритет */
-if (matchMedia('(hover:hover) and (pointer:fine)').matches) svV.forEach(function(v, i){ v.closest('.sv').addEventListener('mouseenter', function(){ if (svOn > -1 && svOn !== i) svV[svOn].pause(); svOn = i; bplay(v); }); });
+
 /* живий фон показуємо лише коли видно секції B */
 new IntersectionObserver(function(en, o){ if (en[0].isIntersecting){ window.__flowInit(); o.disconnect(); } }, { rootMargin:'700px 0px' }).observe(bRoot);
 new IntersectionObserver(function(en){ document.body.classList.toggle('flow-on', en[0].isIntersecting); if (en[0].isIntersecting && window.__flowDraw) window.__flowDraw(); }, { threshold:0 }).observe(bRoot);
